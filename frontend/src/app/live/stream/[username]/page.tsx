@@ -1,18 +1,68 @@
 'use client';
 
-import { useParams } from 'next/navigation';
+import { useEffect, useRef, useState } from 'react';
+import { useParams, useSearchParams } from 'next/navigation';
 import StreamPlayer from '@/components/Live/StreamPlayer';
 import LiveChat from '@/components/Live/LiveChat';
 import { TipButton } from '@/components/Tip';
 import { PredictionWidget } from '@/components/Prediction';
 import { User, Share2, Heart, MoreHorizontal } from 'lucide-react';
+import { P2PClient } from '@tai/p2p-client';
 
 export default function StreamPage() {
     const params = useParams();
+    const searchParams = useSearchParams();
     const username = params.username as string;
+    const privacyMode = searchParams.get('privacy') === 'true';
+
+    // P2P State
+    const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+    const [isConnected, setIsConnected] = useState(false);
+    const clientRef = useRef<P2PClient | null>(null);
 
     // Mock streamer address - in real app, fetch from profile
     const streamerAddress = '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
+
+    useEffect(() => {
+        const joinRoom = async () => {
+            try {
+                // For viewer, we don't need to capture media
+                const client = new P2PClient({
+                    signalingUrl: 'ws://localhost:8080',
+                    roomId: username, // Use username as room ID
+                    peerId: crypto.randomUUID(),
+                    turnServers: [{ urls: 'turn:localhost:3478', username: 'username', credential: 'password' }],
+                    privacyMode: privacyMode
+                });
+
+                // Handle incoming tracks from broadcaster
+                (client as any).onTrack = (stream: MediaStream, peerId: string) => {
+                    console.log('🎥 Received stream from broadcaster:', peerId);
+                    setRemoteStream(stream);
+                    setIsConnected(true);
+                };
+
+                (client as any).onPeerDisconnect = (peerId: string) => {
+                    console.log('❌ Broadcaster disconnected:', peerId);
+                    setRemoteStream(null);
+                    setIsConnected(false);
+                };
+
+                // Start without local stream (viewer mode)
+                await client.start(null as any);
+                clientRef.current = client;
+                console.log('📡 Joined room as viewer:', username);
+            } catch (err) {
+                console.error('Failed to join room:', err);
+            }
+        };
+
+        joinRoom();
+
+        return () => {
+            clientRef.current?.destroy();
+        };
+    }, [username, privacyMode]);
 
     return (
         <div className="flex h-[calc(100vh-5rem)] overflow-hidden">
@@ -20,7 +70,7 @@ export default function StreamPage() {
             <div className="flex-1 flex flex-col overflow-y-auto bg-neutral-950">
                 {/* Player Container */}
                 <div className="w-full bg-black aspect-video max-h-[70vh]">
-                    <StreamPlayer />
+                    <StreamPlayer stream={remoteStream} isLive={isConnected} />
                 </div>
 
                 {/* Stream Info */}
@@ -34,9 +84,11 @@ export default function StreamPage() {
                                         <User className="w-8 h-8 text-white" />
                                     </div>
                                 </div>
-                                <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-red-600 text-white text-[10px] font-bold rounded uppercase tracking-wider border-2 border-neutral-950">
-                                    Live
-                                </div>
+                                {isConnected && (
+                                    <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-red-600 text-white text-[10px] font-bold rounded uppercase tracking-wider border-2 border-neutral-950">
+                                        Live
+                                    </div>
+                                )}
                             </div>
 
                             {/* Text Info */}
@@ -101,3 +153,4 @@ export default function StreamPage() {
         </div>
     );
 }
+

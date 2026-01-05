@@ -1,17 +1,35 @@
 'use client';
 
-import { useState, useRef } from 'react';
-import { Play, Pause, Volume2, VolumeX, Maximize, Settings } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Play, Pause, Volume2, VolumeX, Maximize, Settings, WifiOff } from 'lucide-react';
 
 interface StreamPlayerProps {
-    streamUrl?: string; // For future HLS integration
+    stream?: MediaStream | null; // P2P MediaStream
+    streamUrl?: string; // Fallback HLS/VOD URL
     poster?: string;
+    isLive?: boolean;
 }
 
-export default function StreamPlayer({ streamUrl, poster }: StreamPlayerProps) {
+export default function StreamPlayer({ stream, streamUrl, poster, isLive = true }: StreamPlayerProps) {
     const videoRef = useRef<HTMLVideoElement>(null);
     const [isPlaying, setIsPlaying] = useState(false);
-    const [isMuted, setIsMuted] = useState(false);
+    const [isMuted, setIsMuted] = useState(true); // Start muted for autoplay
+    const [hasStream, setHasStream] = useState(false);
+
+    // Handle P2P MediaStream
+    useEffect(() => {
+        if (stream && videoRef.current) {
+            videoRef.current.srcObject = stream;
+            videoRef.current.play().then(() => {
+                setIsPlaying(true);
+                setHasStream(true);
+            }).catch(err => {
+                console.error('Autoplay failed:', err);
+            });
+        } else if (!stream) {
+            setHasStream(false);
+        }
+    }, [stream]);
 
     const togglePlay = () => {
         if (videoRef.current) {
@@ -43,14 +61,26 @@ export default function StreamPlayer({ streamUrl, poster }: StreamPlayerProps) {
 
     return (
         <div className="relative aspect-video bg-black rounded-xl overflow-hidden group">
-            {/* Video Element (Mock Source for Phase 1) */}
+            {/* Video Element */}
             <video
                 ref={videoRef}
                 className="w-full h-full object-cover"
                 poster={poster}
-                src="http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+                src={!stream ? streamUrl : undefined}
                 onClick={togglePlay}
+                muted={isMuted}
+                playsInline
+                autoPlay
             />
+
+            {/* No Stream Placeholder */}
+            {!hasStream && !streamUrl && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-900">
+                    <WifiOff className="w-16 h-16 text-neutral-600 mb-4" />
+                    <p className="text-neutral-500 text-lg">Waiting for stream...</p>
+                    <p className="text-neutral-600 text-sm mt-2">Connecting to broadcaster</p>
+                </div>
+            )}
 
             {/* Overlay Controls */}
             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-4">
@@ -69,10 +99,19 @@ export default function StreamPlayer({ streamUrl, poster }: StreamPlayerProps) {
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-2 px-2 py-1 bg-red-600 rounded text-xs font-bold text-white uppercase tracking-wider">
-                            <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
-                            Live
-                        </div>
+                        {isLive && hasStream && (
+                            <div className="flex items-center gap-2 px-2 py-1 bg-red-600 rounded text-xs font-bold text-white uppercase tracking-wider">
+                                <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
+                                Live
+                            </div>
+                        )}
+
+                        {!hasStream && (
+                            <div className="flex items-center gap-2 px-2 py-1 bg-neutral-700 rounded text-xs font-bold text-neutral-300 uppercase tracking-wider">
+                                <span className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" />
+                                Connecting
+                            </div>
+                        )}
                     </div>
 
                     <div className="flex items-center gap-4">
@@ -88,3 +127,4 @@ export default function StreamPlayer({ streamUrl, poster }: StreamPlayerProps) {
         </div>
     );
 }
+

@@ -3,9 +3,13 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const fs = require('fs');
 const path = require('path');
+const { startSignalingServer } = require('./signaling');
+const shelbyRoutes = require('./routes/shelby');
+const { router: roomsRoutes, setRoomsProvider } = require('./routes/rooms');
 
 const app = express();
 const PORT = 3001;
+const SIGNALING_PORT = 8080;
 const DATA_FILE = path.join(__dirname, '../data/waitlist.json');
 
 // Middleware
@@ -22,7 +26,10 @@ if (!fs.existsSync(DATA_FILE)) {
     fs.writeFileSync(DATA_FILE, JSON.stringify([], null, 2));
 }
 
-// Routes
+// API Routes
+app.use('/api/shelby', shelbyRoutes);
+app.use('/api/rooms', roomsRoutes);
+
 app.get('/', (req, res) => {
     res.send('Tai Backend is running 🍄');
 });
@@ -58,6 +65,11 @@ app.post('/api/waitlist', (req, res) => {
     }
 });
 
+// Start Express server
 app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`🍄 Tai Backend running on http://localhost:${PORT}`);
 });
+
+// Start WebSocket signaling server and share peers map with rooms API
+const { wss, peers } = startSignalingServer(SIGNALING_PORT);
+setRoomsProvider(() => peers);

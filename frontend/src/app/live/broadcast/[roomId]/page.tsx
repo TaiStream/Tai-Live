@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import LiveChat from '@/components/Live/LiveChat';
 import { PredictionWidget } from '@/components/Prediction';
-import { Eye, Copy, VideoOff, MicOff, Mic, Video, X, Monitor, Crown, Headphones, Share2 } from 'lucide-react';
+import { Eye, Copy, VideoOff, MicOff, Mic, Video, X, Monitor, Crown, Headphones, Share2, Cloud, CloudOff } from 'lucide-react';
 import { P2PClient } from '@tai/p2p-client';
 
 // Room type configurations
@@ -45,6 +45,26 @@ const ROOM_CONFIGS = {
 
 type RoomType = keyof typeof ROOM_CONFIGS;
 
+// Shelby upload helper
+async function uploadChunkToShelby(chunk: Blob, streamId: string, chunkIndex: number): Promise<void> {
+    try {
+        const response = await fetch('http://localhost:3001/api/shelby/upload', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'video/webm',
+                'x-stream-id': streamId,
+                'x-chunk-index': chunkIndex.toString(),
+            },
+            body: chunk,
+        });
+        if (!response.ok) {
+            console.error('Shelby upload failed:', await response.text());
+        }
+    } catch (error) {
+        console.error('Shelby upload error:', error);
+    }
+}
+
 export default function BroadcastPage() {
     const params = useParams();
     const searchParams = useSearchParams();
@@ -59,10 +79,14 @@ export default function BroadcastPage() {
     const [isScreenSharing, setIsScreenSharing] = useState(false);
     const [viewerCount, setViewerCount] = useState(0);
     const [streamDuration, setStreamDuration] = useState(0);
+    const [isRecording, setIsRecording] = useState(false);
+    const [chunksUploaded, setChunksUploaded] = useState(0);
 
     const localVideoRef = useRef<HTMLVideoElement>(null);
     const screenShareRef = useRef<HTMLVideoElement>(null);
     const clientRef = useRef<P2PClient | null>(null);
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const chunkIndexRef = useRef(0);
     const startTimeRef = useRef<number>(Date.now());
 
     // Mock streamer data
@@ -81,6 +105,7 @@ export default function BroadcastPage() {
                     localVideoRef.current.srcObject = stream;
                 }
 
+                // Start P2P client
                 const client = new P2PClient({
                     signalingUrl: 'ws://localhost:8080',
                     roomId: roomId,
@@ -92,6 +117,28 @@ export default function BroadcastPage() {
                 await client.start(stream);
                 clientRef.current = client;
                 console.log(`📡 Broadcasting ${roomType} stream for room:`, roomId);
+
+                // Start MediaRecorder for Shelby VOD
+                if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+                    const recorder = new MediaRecorder(stream, {
+                        mimeType: 'video/webm;codecs=vp9',
+                        videoBitsPerSecond: 2500000, // 2.5 Mbps
+                    });
+
+                    recorder.ondataavailable = async (event) => {
+                        if (event.data.size > 0) {
+                            const currentChunk = chunkIndexRef.current++;
+                            await uploadChunkToShelby(event.data, roomId, currentChunk);
+                            setChunksUploaded(currentChunk + 1);
+                        }
+                    };
+
+                    // Record in 5-second chunks
+                    recorder.start(5000);
+                    mediaRecorderRef.current = recorder;
+                    setIsRecording(true);
+                    console.log('🎬 VOD recording started');
+                }
             } catch (err) {
                 console.error('Failed to start broadcast:', err);
             }
@@ -116,6 +163,9 @@ export default function BroadcastPage() {
             if (screenShareRef.current?.srcObject) {
                 (screenShareRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
             }
+            if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+                mediaRecorderRef.current.stop();
+            }
             clientRef.current?.destroy();
         };
     }, [roomId, privacyMode, roomType, config.hasVideo]);
@@ -127,6 +177,7 @@ export default function BroadcastPage() {
             setIsMuted(!isMuted);
         }
     };
+
 
     const toggleVideo = () => {
         if (!config.hasVideo) return;
