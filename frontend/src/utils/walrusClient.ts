@@ -6,12 +6,15 @@
  */
 
 // Walrus endpoints
-const WALRUS_AGGREGATOR_TESTNET = 'https://aggregator.wal-test.cloud';
-const WALRUS_PUBLISHER_TESTNET = 'https://publisher.wal-test.cloud';
+const WALRUS_AGGREGATOR_TESTNET = 'https://aggregator.walrus-testnet.walrus.space';
+const WALRUS_PUBLISHER_TESTNET = 'https://publisher.walrus-testnet.walrus.space';
 const WALRUS_AGGREGATOR_MAINNET = 'https://aggregator.wal.cloud';
 const WALRUS_PUBLISHER_MAINNET = 'https://publisher.wal.cloud';
 
 export type WalrusNetwork = 'mainnet' | 'testnet';
+
+// 10MB Chunks for large file support
+const CHUNK_SIZE = 10 * 1024 * 1024;
 
 export interface WalrusUploadResult {
     blobId: string;
@@ -19,6 +22,24 @@ export interface WalrusUploadResult {
     url: string;
     size: number;
     mediaType: string;
+}
+
+export interface VideoChunk {
+    index: number;
+    blobId: string;
+    offsetStart: number;
+    offsetEnd: number;
+    size: number;
+}
+
+export interface TaiManifest {
+    version: '1.0';
+    title: string;
+    durationMs: number;
+    mimeType: string;
+    totalSize: number;
+    chunks: VideoChunk[];
+    createdAt: number;
 }
 
 export interface WalrusConfig {
@@ -37,17 +58,10 @@ function getEndpoints(network: WalrusNetwork) {
 }
 
 /**
- * Upload a file to Walrus storage
- * 
- * @example
- * ```ts
- * const result = await uploadToWalrus(videoFile, { network: 'testnet' });
- * console.log('Blob ID:', result.blobId);
- * console.log('URL:', result.url);
- * ```
+ * Upload a single blob to Walrus storage
  */
 export async function uploadToWalrus(
-    file: File | Blob,
+    file: File | Blob | any,
     config: WalrusConfig = { network: 'testnet' }
 ): Promise<WalrusUploadResult> {
     const { publisher, aggregator } = getEndpoints(config.network);
@@ -57,7 +71,7 @@ export async function uploadToWalrus(
     const response = await fetch(`${publisher}/v1/blobs?epochs=${epochs}`, {
         method: 'PUT',
         headers: {
-            'Content-Type': file.type || 'application/octet-stream',
+            'Content-Type': 'application/octet-stream', // Generic binary for chunks
         },
         body: file,
     });
@@ -77,17 +91,78 @@ export async function uploadToWalrus(
         throw new Error('No blob ID in response');
     }
 
+    // Handle size logic safely
+    let size = 0;
+    if (file && typeof file.size === 'number') size = file.size;
+    else if (file && typeof file.length === 'number') size = file.length;
+
     return {
         blobId,
         suiObjectId: blobInfo?.id,
         url: `${aggregator}/v1/blobs/${blobId}`,
-        size: file.size,
+        size: size,
         mediaType: file.type || 'application/octet-stream',
     };
 }
 
 /**
- * Get a blob URL from Walrus
+ * Upload a large video file by splitting it into chunks
+ * Returns the Blob ID of the Manifest file
+ */
+export async function uploadVideo(
+    file: File,
+    title: string,
+    config: WalrusConfig = { network: 'testnet' }
+): Promise<WalrusUploadResult> {
+    const totalSize = file.size;
+    const totalChunks = Math.ceil(totalSize / CHUNK_SIZE);
+    const uploadedChunks: VideoChunk[] = [];
+
+    console.log(`[TaiUpload] Starting upload: ${title} (${(totalSize / 1024 / 1024).toFixed(2)} MB in ${totalChunks} chunks)`);
+
+    // 1. Upload Chunks (sequentially for safety, could be parallelized)
+    for (let i = 0; i < totalChunks; i++) {
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, totalSize);
+        const chunkBlob = file.slice(start, end);
+
+        console.log(`[TaiUpload] Uploading chunk ${i + 1}/${totalChunks}...`);
+
+        try {
+            const result = await uploadToWalrus(chunkBlob, config);
+            uploadedChunks.push({
+                index: i,
+                blobId: result.blobId,
+                offsetStart: start,
+                offsetEnd: end,
+                size: chunkBlob.size
+            });
+        } catch (err) {
+            console.error(`[TaiUpload] Chunk ${i} failed`, err);
+            throw err;
+        }
+    }
+
+    // 2. Create Manifest
+    const manifest: TaiManifest = {
+        version: '1.0',
+        title,
+        durationMs: 0, // TODO: Extract duration from video file if possible
+        mimeType: file.type,
+        totalSize,
+        createdAt: Date.now(),
+        chunks: uploadedChunks
+    };
+
+    // 3. Upload Manifest
+    const manifestBlob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' });
+    console.log(`[TaiUpload] Uploading Manifest...`);
+
+    return uploadToWalrus(manifestBlob, config);
+}
+
+/**
+ * Get a blob URL from Walrus (Direct or via Tai Node)
  */
 export function getWalrusUrl(blobId: string, network: WalrusNetwork = 'testnet'): string {
     const { aggregator } = getEndpoints(network);
@@ -126,24 +201,4 @@ export async function blobExists(
     } catch {
         return false;
     }
-}
-
-/**
- * Upload stream recording to Walrus and return blob ID for on-chain content
- * 
- * @example
- * ```ts
- * // After stream ends, save recording
- * const recording = await getStreamRecording();
- * const { blobId } = await uploadStreamRecording(recording, 'testnet');
- * 
- * // Use blobId when calling content::publish_paid() on-chain
- * ```
- */
-export async function uploadStreamRecording(
-    recording: Blob,
-    network: WalrusNetwork = 'testnet',
-    epochs: number = 10 // Longer storage for VOD
-): Promise<WalrusUploadResult> {
-    return uploadToWalrus(recording, { network, epochs });
 }

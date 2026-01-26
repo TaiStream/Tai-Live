@@ -4,8 +4,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import LiveChat from '@/components/Live/LiveChat';
 import { PredictionWidget } from '@/components/Prediction';
-import { Eye, Copy, VideoOff, MicOff, Mic, Video, X, Monitor, Crown, Headphones, Share2, Cloud, CloudOff } from 'lucide-react';
+import { Eye, Copy, VideoOff, MicOff, Mic, Video, X, Monitor, Crown, Headphones, Share2, Cloud, CloudOff, Loader2 } from 'lucide-react';
 import { P2PClient } from '@tai/p2p-client';
+import { uploadVideo } from '@/utils/walrusClient';
 
 // Room type configurations
 const ROOM_CONFIGS = {
@@ -45,26 +46,6 @@ const ROOM_CONFIGS = {
 
 type RoomType = keyof typeof ROOM_CONFIGS;
 
-// Shelby upload helper
-async function uploadChunkToShelby(chunk: Blob, streamId: string, chunkIndex: number): Promise<void> {
-    try {
-        const response = await fetch('http://localhost:3001/api/shelby/upload', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'video/webm',
-                'x-stream-id': streamId,
-                'x-chunk-index': chunkIndex.toString(),
-            },
-            body: chunk,
-        });
-        if (!response.ok) {
-            console.error('Shelby upload failed:', await response.text());
-        }
-    } catch (error) {
-        console.error('Shelby upload error:', error);
-    }
-}
-
 export default function BroadcastPage() {
     const params = useParams();
     const searchParams = useSearchParams();
@@ -80,13 +61,13 @@ export default function BroadcastPage() {
     const [viewerCount, setViewerCount] = useState(0);
     const [streamDuration, setStreamDuration] = useState(0);
     const [isRecording, setIsRecording] = useState(false);
-    const [chunksUploaded, setChunksUploaded] = useState(0);
+    const [isUploading, setIsUploading] = useState(false);
 
     const localVideoRef = useRef<HTMLVideoElement>(null);
     const screenShareRef = useRef<HTMLVideoElement>(null);
     const clientRef = useRef<P2PClient | null>(null);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-    const chunkIndexRef = useRef(0);
+    const recordedChunksRef = useRef<Blob[]>([]);
     const startTimeRef = useRef<number>(Date.now());
 
     // Mock streamer data
@@ -118,23 +99,20 @@ export default function BroadcastPage() {
                 clientRef.current = client;
                 console.log(`📡 Broadcasting ${roomType} stream for room:`, roomId);
 
-                // Start MediaRecorder for Shelby VOD
+                // Start MediaRecorder for Walrus VOD
                 if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
                     const recorder = new MediaRecorder(stream, {
                         mimeType: 'video/webm;codecs=vp9',
                         videoBitsPerSecond: 2500000, // 2.5 Mbps
                     });
 
-                    recorder.ondataavailable = async (event) => {
+                    recorder.ondataavailable = (event) => {
                         if (event.data.size > 0) {
-                            const currentChunk = chunkIndexRef.current++;
-                            await uploadChunkToShelby(event.data, roomId, currentChunk);
-                            setChunksUploaded(currentChunk + 1);
+                            recordedChunksRef.current.push(event.data);
                         }
                     };
 
-                    // Record in 5-second chunks
-                    recorder.start(5000);
+                    recorder.start(2000); // 2s chunks for safety
                     mediaRecorderRef.current = recorder;
                     setIsRecording(true);
                     console.log('🎬 VOD recording started');
@@ -216,12 +194,45 @@ export default function BroadcastPage() {
         alert('Stream link copied!');
     };
 
-    const endStream = () => {
-        if (localVideoRef.current?.srcObject) {
-            (localVideoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
+    const endStream = async () => {
+        if (isUploading) return;
+
+        // Stop Recording
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+            mediaRecorderRef.current.stop();
         }
-        clientRef.current?.destroy();
-        window.location.href = '/live/dashboard';
+
+        setIsUploading(true);
+
+        try {
+            // Wait a moment for final chunks
+            await new Promise(r => setTimeout(r, 500));
+
+            // Create Blob
+            const vodBlob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
+
+            // Convert Blob to File for SDK
+            const vodFile = new File([vodBlob], `stream-${roomId}.webm`, { type: 'video/webm' });
+
+            console.log(`[VOD] Uploading ${vodFile.size} bytes to Walrus...`);
+
+            // Upload to Walrus via SDK
+            const result = await uploadVideo(vodFile, `Stream VOD: ${roomId}`);
+
+            console.log('[VOD] Upload complete! Manifest ID:', result.blobId);
+            alert(`Stream Ended & Uploaded to Walrus!\nManifest ID: ${result.blobId}`);
+
+        } catch (error) {
+            console.error('[VOD] Upload failed:', error);
+            alert('Upload failed check console');
+        } finally {
+            // Cleanup
+            if (localVideoRef.current?.srcObject) {
+                (localVideoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
+            }
+            clientRef.current?.destroy();
+            window.location.href = '/live/dashboard';
+        }
     };
 
     const formatDuration = (s: number) => {
@@ -303,6 +314,15 @@ export default function BroadcastPage() {
                         <span className="text-white text-sm font-medium">{viewerCount}</span>
                     </div>
 
+                    {/* Uploading Overlay */}
+                    {isUploading && (
+                        <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-50">
+                            <Loader2 className="w-16 h-16 text-cyan-500 animate-spin mb-4" />
+                            <h2 className="text-2xl font-bold text-white">Saving VOD to Walrus...</h2>
+                            <p className="text-neutral-400 mt-2">Permanently storing on the decentralized web.</p>
+                        </div>
+                    )}
+
                     {/* Controls */}
                     <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3 p-2 bg-black/60 backdrop-blur rounded-xl">
                         <button onClick={toggleMute} className={`p-3 rounded-lg transition-all ${isMuted ? 'bg-red-500/20 text-red-500' : 'bg-white/10 hover:bg-white/20 text-white'}`}>
@@ -321,8 +341,8 @@ export default function BroadcastPage() {
                         <button onClick={copyShareLink} className="p-3 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-all">
                             <Share2 className="w-5 h-5" />
                         </button>
-                        <button onClick={endStream} className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-semibold transition-all flex items-center gap-2">
-                            <X className="w-4 h-4" />End
+                        <button onClick={endStream} disabled={isUploading} className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-semibold transition-all flex items-center gap-2">
+                            <X className="w-4 h-4" />{isUploading ? 'Saving...' : 'End'}
                         </button>
                     </div>
                 </div>

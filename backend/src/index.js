@@ -6,6 +6,7 @@ const path = require('path');
 const { startSignalingServer } = require('./signaling');
 const shelbyRoutes = require('./routes/shelby');
 const { router: roomsRoutes, setRoomsProvider } = require('./routes/rooms');
+const deliveryRoutes = require('./routes/delivery');
 
 const app = express();
 const PORT = 3001;
@@ -29,6 +30,7 @@ if (!fs.existsSync(DATA_FILE)) {
 // API Routes
 app.use('/api/shelby', shelbyRoutes);
 app.use('/api/rooms', roomsRoutes);
+app.use('/', deliveryRoutes); // Mount at root for cleaner URLs like /stream/:id
 
 app.get('/', (req, res) => {
     res.send('Tai Backend is running 🍄');
@@ -68,6 +70,7 @@ app.post('/api/waitlist', (req, res) => {
 // Start Express server
 app.listen(PORT, () => {
     console.log(`🍄 Tai Backend running on http://localhost:${PORT}`);
+    console.log(`🚀 Delivery Node Active at http://localhost:${PORT}/stream/:blobId`);
 });
 
 // Start WebSocket signaling server and share peers map with rooms API
