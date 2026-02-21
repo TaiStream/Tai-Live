@@ -84,9 +84,12 @@ Node.js signaling server for WebRTC peer coordination.
 
 | Resource | ID |
 |----------|-----|
-| Package (10 modules) | `0x485d8011d546fd82d576b5b60bad253d22f48cf0b5e8f56876d3edebb64b9f62` |
-| PointsRegistry | `0x67d1ee884dd7b5c7860630b09bca5eb6a4efdc83823c0177cdd4fb662f2706a5` |
-| ReputationRegistry | `0xf92467260dc1963c1d00426801e650edb2f12ef945082a21c070f684e64c9a19` |
+| Package (10 modules) | `0x181fbc7bdfa4f52651fd1755af3a0e93a00d0dec9543c717a30e2513f105dd25` |
+| PointsRegistry | `0xd82fe9017f6c9fe3bddba351fb869631aa66ee3cf1961e1fc257814cc3f0d064` |
+| ReputationRegistry | `0x6723bdfe3ad0329470c80cba31b90aa3d01d83cc9eaeec46abeb968b711e349b` |
+| StreamRegistry | `0x84da6dd61e5045bf7ee01fea697eb5330d7402f9a604c430b6a90c7eba149538` |
+| SessionRegistry | `0x60023c68c68ea41187d7120601c818ca8d2ebc6e4fc3064c35325e048105ae73` |
+| Treasury | `0xccdb809562b7bd55d86ac697dcfa22f26d30c0017905300dd9d51b495578b50f` |
 
 ## Getting Started
 
