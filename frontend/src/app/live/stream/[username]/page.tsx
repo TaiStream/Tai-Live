@@ -14,17 +14,27 @@ export default function StreamPage() {
     const searchParams = useSearchParams();
     const username = params.username as string;
     const privacyMode = searchParams.get('privacy') === 'true';
+    const mode = (searchParams.get('mode') || 'p2p') as 'p2p' | 'relay';
 
-    // P2P State
+    // State
     const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
     const [isConnected, setIsConnected] = useState(false);
     const clientRef = useRef<P2PClient | null>(null);
 
-    // Mock streamer address - in real app, fetch from profile
-    const streamerAddress = '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
+    // TODO: Fetch streamer address from on-chain profile by username
+    // For now, pass through from query params or use empty placeholder
+    const streamerAddress = searchParams.get('streamer') || '';
 
     useEffect(() => {
-        const joinRoom = async () => {
+        // Mode 1: Relay (Broadcast)
+        if (mode === 'relay') {
+            // StreamPlayer handles WS connection internally via MSE
+            setIsConnected(true); // Assume connected for UI state, Player handles real connection
+            return;
+        }
+
+        // Mode 2: P2P (Meeting/Co-Stream)
+        const joinP2PRoom = async () => {
             try {
                 // For viewer, we don't need to capture media
                 const client = new P2PClient({
@@ -51,18 +61,18 @@ export default function StreamPage() {
                 // Start without local stream (viewer mode)
                 await client.start(null as any);
                 clientRef.current = client;
-                console.log('📡 Joined room as viewer:', username);
+                console.log('📡 Joined P2P room as viewer:', username);
             } catch (err) {
                 console.error('Failed to join room:', err);
             }
         };
 
-        joinRoom();
+        joinP2PRoom();
 
         return () => {
             clientRef.current?.destroy();
         };
-    }, [username, privacyMode]);
+    }, [username, privacyMode, mode]);
 
     return (
         <div className="flex h-[calc(100vh-5rem)] overflow-hidden">
@@ -70,7 +80,11 @@ export default function StreamPage() {
             <div className="flex-1 flex flex-col overflow-y-auto bg-neutral-950">
                 {/* Player Container */}
                 <div className="w-full bg-black aspect-video max-h-[70vh]">
-                    <StreamPlayer stream={remoteStream} isLive={isConnected} />
+                    <StreamPlayer
+                        stream={remoteStream}
+                        streamUrl={mode === 'relay' ? 'ws://localhost:8081' : undefined}
+                        isLive={isConnected}
+                    />
                 </div>
 
                 {/* Stream Info */}

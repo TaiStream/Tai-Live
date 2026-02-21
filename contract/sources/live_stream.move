@@ -14,6 +14,9 @@ module tai::live_stream {
     const ENotBroadcaster: u64 = 1;
     const EStreamAlreadyActive: u64 = 2;
     const EInvalidRoomId: u64 = 3;
+    const EInvalidTag: u64 = 4;
+    const ETagTooLong: u64 = 5;
+    const ETooManyTags: u64 = 6;
 
     // ========== Stream Status ==========
     const STATUS_LIVE: u8 = 0;
@@ -257,16 +260,21 @@ module tai::live_stream {
         _ctx: &mut TxContext
     ) {
         assert!(cap.stream_id == object::id(stream), ENotBroadcaster);
+        assert!(vector::length(&tag) > 0, EInvalidTag);
+        assert!(vector::length(&tag) <= 50, ETagTooLong);
+        assert!(vector::length(&stream.tags) < 20, ETooManyTags);
         vector::push_back(&mut stream.tags, string::utf8(tag));
     }
 
-    /// Record a viewer joining (called by relay nodes)
+    /// Record a viewer joining (called by stream owner / relay nodes)
     public fun record_viewer_join(
         stream: &mut LiveStream,
+        cap: &StreamOwnerCap,
         viewer: address,
         clock: &Clock,
         _ctx: &mut TxContext
     ) {
+        assert!(cap.stream_id == object::id(stream), ENotBroadcaster);
         assert!(stream.status == STATUS_LIVE, EStreamNotActive);
 
         stream.total_viewers = stream.total_viewers + 1;
@@ -287,10 +295,12 @@ module tai::live_stream {
     /// Record viewer leaving and watch time
     public fun record_viewer_leave(
         stream: &mut LiveStream,
+        cap: &StreamOwnerCap,
         viewer: address,
         watch_minutes: u64,
         _ctx: &mut TxContext
     ) {
+        assert!(cap.stream_id == object::id(stream), ENotBroadcaster);
         stream.total_watch_minutes = stream.total_watch_minutes + watch_minutes;
 
         event::emit(ViewerLeft {

@@ -329,41 +329,58 @@ module tai::user_profile {
         _clock: &Clock
     ) {
         if (option::is_some(&profile.tier_access.proof_data)) {
-            let data = option::borrow_mut(&mut profile.tier_access.proof_data);
-            
-            if (data.status != STATUS_TRIAL) { return };
-            
-            let total_weeks = vec_map::length(&data.weekly_metrics);
-            let mut passing_weeks = 0;
-            let mut i = 0;
-            
-            while (i < total_weeks) {
-                let (_, metrics) = vec_map::get_entry_by_idx(&data.weekly_metrics, i);
-                if (metrics.bar_met) {
-                    passing_weeks = passing_weeks + 1;
+            // First pass: read-only to determine outcome
+            let mut should_graduate = false;
+            let mut should_revoke = false;
+            {
+                let data = option::borrow(&profile.tier_access.proof_data);
+                if (data.status != STATUS_TRIAL) { return };
+
+                let total_weeks = vec_map::length(&data.weekly_metrics);
+                let mut passing_weeks = 0;
+                let mut i = 0;
+
+                while (i < total_weeks) {
+                    let (_, metrics) = vec_map::get_entry_by_idx(&data.weekly_metrics, i);
+                    if (metrics.bar_met) {
+                        passing_weeks = passing_weeks + 1;
+                    };
+                    i = i + 1;
                 };
-                i = i + 1;
+
+                if (passing_weeks >= 6 && total_weeks >= 8) {
+                    should_graduate = true;
+                } else if (total_weeks >= 8) {
+                    should_revoke = true;
+                };
             };
-            
-            // Logic: 6 out of 8 weeks passed
-            if (passing_weeks >= 6 && total_weeks >= 8) {
-                // GRADUATE
-                data.status = STATUS_GRADUATED;
+
+            // Second pass: mutate proof_data status first, then update sibling fields
+            if (should_graduate) {
+                {
+                    let data = option::borrow_mut(&mut profile.tier_access.proof_data);
+                    data.status = STATUS_GRADUATED;
+                };
+                // Borrow dropped — safe to access sibling fields
+                let final_tier = profile.tier_access.tier;
                 profile.tier_access.access_method = ACCESS_GRADUATED;
-                
+
                 event::emit(Graduated {
                     profile_id: object::id(profile),
                     method: ACCESS_GRADUATED,
-                    final_tier: profile.tier_access.tier
+                    final_tier
                 });
-            } else if (total_weeks >= 8) {
-                // FAIL / REVOKE
-                data.status = STATUS_REVOKED;
-                profile.tier_access.tier = TIER_AUDIO; // Downgrade
-                 
+            } else if (should_revoke) {
+                {
+                    let data = option::borrow_mut(&mut profile.tier_access.proof_data);
+                    data.status = STATUS_REVOKED;
+                };
+                let old_tier = profile.tier_access.tier;
+                profile.tier_access.tier = TIER_AUDIO;
+
                 event::emit(TierUpdated {
                     profile_id: object::id(profile),
-                    old_tier: profile.tier_access.tier, // Technically we just changed it... let's simplify
+                    old_tier,
                     new_tier: TIER_AUDIO,
                     method: ACCESS_GRADUATED,
                     status: STATUS_REVOKED
@@ -422,8 +439,8 @@ module tai::user_profile {
                 if (profile.tier_access.tier > TIER_VIDEO) {
                     profile.tier_access.tier = TIER_VIDEO;
                 };
-                
-                // Initialize or update proof_data for trial
+
+                // Initialize proof_data for trial, but don't extend existing trial
                 let now = clock::timestamp_ms(clock);
                 if (option::is_none(&profile.tier_access.proof_data)) {
                     profile.tier_access.proof_data = option::some(ProofData {
@@ -434,8 +451,12 @@ module tai::user_profile {
                     });
                 } else {
                     let data = option::borrow_mut(&mut profile.tier_access.proof_data);
-                    data.status = STATUS_TRIAL;
-                    data.expires_at = now + (60 * 24 * 60 * 60 * 1000);
+                    // Only set trial if not already in trial (prevent extension exploit)
+                    if (data.status != STATUS_TRIAL) {
+                        data.status = STATUS_TRIAL;
+                        data.expires_at = now + (60 * 24 * 60 * 60 * 1000);
+                    };
+                    // If already in trial, keep existing expiry
                 };
                 
                 event::emit(TrialStarted {

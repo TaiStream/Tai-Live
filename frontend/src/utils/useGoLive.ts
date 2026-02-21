@@ -13,6 +13,7 @@ interface GoLiveOptions {
     title?: string;
     privacyMode?: boolean;
     roomType?: 'audio' | 'podcast' | 'video' | 'premium';
+    mode?: 'p2p' | 'relay'; // Meeting vs Broadcast
 }
 
 interface GoLiveState {
@@ -54,13 +55,16 @@ export function useGoLive() {
                 title: options.title || 'Live Stream',
                 privacyMode: options.privacyMode || false,
                 roomType: options.roomType || 'video',
+                mode: options.mode || 'p2p',
                 packageId: PACKAGE_ID,
             });
 
-            // 4. Redirect to broadcast page with room type
+            // 4. Redirect to broadcast page with room type and mode
             const params = new URLSearchParams();
             if (options.privacyMode) params.set('privacy', 'true');
             if (options.roomType) params.set('type', options.roomType);
+            params.set('mode', options.mode || 'p2p');
+
             const queryString = params.toString();
             router.push(`/live/broadcast/${roomId}${queryString ? '?' + queryString : ''}`);
 

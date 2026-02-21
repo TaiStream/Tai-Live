@@ -20,7 +20,7 @@ module tai::prediction {
 
     // ========== Constants ==========
     const PLATFORM_FEE_BPS: u64 = 500;  // 5% = 500 basis points
-    const CHALLENGE_WINDOW_MS: u64 = 300_000;  // 5 minutes
+    const CHALLENGE_WINDOW_MS: u64 = 3_600_000;  // 1 hour
 
     // ========== Structs ==========
 
@@ -37,6 +37,8 @@ module tai::prediction {
         resolution: u8,  // 0=OPEN, 1=YES, 2=NO, 3=CANCELLED
         resolved_at: u64,
         challenge_window_end: u64,
+        /// Platform fee collected on resolution (in MIST)
+        platform_fee_collected: u64,
     }
 
     public struct Bet has store, copy, drop {
@@ -100,6 +102,7 @@ module tai::prediction {
             resolution: 0,  // OPEN
             resolved_at: 0,
             challenge_window_end: 0,
+            platform_fee_collected: 0,
         };
 
         event::emit(PredictionCreated {
@@ -165,6 +168,7 @@ module tai::prediction {
     }
 
     /// Resolve the prediction (creator only)
+    /// Extracts platform fee from losing pool at resolution time.
     public fun resolve(
         prediction: &mut Prediction,
         outcome: bool,  // true = YES won, false = NO won
@@ -183,8 +187,25 @@ module tai::prediction {
 
         let total_yes = balance::value(&prediction.pool_yes);
         let total_no = balance::value(&prediction.pool_no);
-        let losing_pool = if (outcome) { total_no } else { total_yes };
-        let platform_fee = (losing_pool * PLATFORM_FEE_BPS) / 10000;
+
+        // Extract platform fee from losing pool at resolution time
+        let losing_pool_size = if (outcome) { total_no } else { total_yes };
+        let platform_fee = (losing_pool_size * PLATFORM_FEE_BPS) / 10000;
+        prediction.platform_fee_collected = platform_fee;
+
+        // Move the platform fee from losing pool to winning pool's creator
+        // (will be extracted when all claims are done or via separate withdraw)
+        // For now, just deduct from losing pool so winners split the rest cleanly
+        if (platform_fee > 0) {
+            if (outcome) {
+                // NO pool is losing — move fee to YES pool (creator can claim)
+                let fee = balance::split(&mut prediction.pool_no, platform_fee);
+                balance::join(&mut prediction.pool_yes, fee);
+            } else {
+                let fee = balance::split(&mut prediction.pool_yes, platform_fee);
+                balance::join(&mut prediction.pool_no, fee);
+            };
+        };
 
         event::emit(PredictionResolved {
             prediction_id: object::id(prediction),
@@ -202,40 +223,45 @@ module tai::prediction {
         clock: &Clock,
         ctx: &mut TxContext
     ): Coin<SUI> {
-        let now = clock::timestamp_ms(clock);
         assert!(prediction.resolution != 0, ENotResolved);
-        assert!(now >= prediction.challenge_window_end, EInChallengeWindow);
 
         let winner = tx_context::sender(ctx);
         assert!(vec_map::contains(&prediction.bets, &winner), ENoBet);
 
         let bet = *vec_map::get(&prediction.bets, &winner);
         let winning_side = prediction.resolution == 1;  // 1 = YES won
-
         assert!(bet.side == winning_side, EWrongSide);
 
-        // Calculate payout
-        let total_yes = balance::value(&prediction.pool_yes);
-        let total_no = balance::value(&prediction.pool_no);
-        let (winning_pool, losing_pool) = if (winning_side) {
-            (total_yes, total_no)
+        let now = clock::timestamp_ms(clock);
+        assert!(now >= prediction.challenge_window_end, EInChallengeWindow);
+
+        // Calculate payout — fee was already extracted at resolution
+        // The winning pool now contains: original winning bets + losing pool (minus fee)
+        // Each winner gets pro-rata share of the entire winning pool
+        let pool = if (winning_side) {
+            &mut prediction.pool_yes
         } else {
-            (total_no, total_yes)
+            &mut prediction.pool_no
+        };
+        let pool_total = balance::value(pool);
+
+        // Sum all bets on winning side to compute pro-rata share
+        // Note: winner's bet is still in the map at this point
+        let mut total_winning_bets = 0u64;
+        let num_bets = vec_map::length(&prediction.bets);
+        let mut i = 0;
+        while (i < num_bets) {
+            let (_, b) = vec_map::get_entry_by_idx(&prediction.bets, i);
+            if (b.side == winning_side) {
+                total_winning_bets = total_winning_bets + b.amount;
+            };
+            i = i + 1;
         };
 
-        // Platform takes 5% of losing pool
-        let platform_fee = (losing_pool * PLATFORM_FEE_BPS) / 10000;
-        let distributable = losing_pool - platform_fee;
+        // Pro-rata share of the entire pool
+        let payout = (bet.amount * pool_total) / total_winning_bets;
 
-        // Pro-rata share: (user_bet / winning_pool) * distributable + original_bet
-        let payout = bet.amount + ((bet.amount * distributable) / winning_pool);
-
-        // Withdraw from appropriate pool
-        let payout_balance = if (winning_side) {
-            balance::split(&mut prediction.pool_yes, payout)
-        } else {
-            balance::split(&mut prediction.pool_no, payout)
-        };
+        let payout_balance = balance::split(pool, payout);
 
         // Remove bet to prevent double claim
         vec_map::remove(&mut prediction.bets, &winner);

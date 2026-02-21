@@ -31,14 +31,82 @@ export default function StreamPlayer({ stream, streamUrl, poster, isLive = true 
         }
     }, [stream]);
 
+    // Handle Relay WebSocket Stream (MSE)
+    useEffect(() => {
+        if (!stream && streamUrl && streamUrl.startsWith('ws')) {
+            const mediaSource = new MediaSource();
+            if (videoRef.current) {
+                videoRef.current.src = URL.createObjectURL(mediaSource);
+            }
+
+            const handleSourceOpen = () => {
+                // Assuming WebM/VP8 from Chrome MediaRecorder for MVP
+                // In production, we'd need to negotiate codecs
+                const mime = 'video/webm; codecs="vp8, opus"';
+
+                if (MediaSource.isTypeSupported(mime)) {
+                    const sourceBuffer = mediaSource.addSourceBuffer(mime);
+                    const ws = new WebSocket(streamUrl);
+
+                    ws.binaryType = 'arraybuffer';
+                    const queue: BufferSource[] = [];
+
+                    ws.onopen = () => {
+                        console.log('Connected to Relay Stream');
+                        // Join as viewer
+                        ws.send(JSON.stringify({
+                            type: 'join_stream',
+                            streamId: 'default-room', // TODO: Pass from props
+                            peerId: `viewer-${Date.now()}`
+                        }));
+                    };
+
+                    ws.onmessage = (event) => {
+                        if (typeof event.data !== 'string') {
+                            if (!sourceBuffer.updating) {
+                                sourceBuffer.appendBuffer(event.data);
+                            } else {
+                                queue.push(event.data);
+                            }
+                        }
+                    };
+
+                    sourceBuffer.addEventListener('updateend', () => {
+                        if (queue.length > 0 && !sourceBuffer.updating) {
+                            sourceBuffer.appendBuffer(queue.shift()!);
+                        }
+                    });
+
+                    ws.onclose = () => console.log('Relay Stream Disconnected');
+
+                    setHasStream(true);
+                    setIsPlaying(true);
+
+                    return () => {
+                        ws.close();
+                    };
+                } else {
+                    console.error('MIME type not supported:', mime);
+                }
+            };
+
+            mediaSource.addEventListener('sourceopen', handleSourceOpen);
+
+            return () => {
+                mediaSource.removeEventListener('sourceopen', handleSourceOpen);
+            };
+        }
+    }, [stream, streamUrl]);
+
     const togglePlay = () => {
         if (videoRef.current) {
             if (isPlaying) {
                 videoRef.current.pause();
+                setIsPlaying(false);
             } else {
                 videoRef.current.play();
+                setIsPlaying(true);
             }
-            setIsPlaying(!isPlaying);
         }
     };
 
@@ -66,7 +134,7 @@ export default function StreamPlayer({ stream, streamUrl, poster, isLive = true 
                 ref={videoRef}
                 className="w-full h-full object-cover"
                 poster={poster}
-                src={!stream ? streamUrl : undefined}
+                src={!stream && !streamUrl?.startsWith('ws') ? streamUrl : undefined}
                 onClick={togglePlay}
                 muted={isMuted}
                 playsInline

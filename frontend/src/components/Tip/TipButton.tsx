@@ -5,9 +5,17 @@ import { useCurrentAccount, useSignAndExecuteTransaction, useSuiClient } from '@
 import { Transaction } from '@mysten/sui/transactions';
 import { Heart, Loader2, CheckCircle } from 'lucide-react';
 
+const PACKAGE_ID = process.env.NEXT_PUBLIC_TAI_PACKAGE_ID;
+if (!PACKAGE_ID) throw new Error('NEXT_PUBLIC_TAI_PACKAGE_ID env var required');
+
+const TREASURY_ID = process.env.NEXT_PUBLIC_TREASURY_ID;
+const CLOCK_ID = '0x6';
+
 interface TipButtonProps {
     recipientAddress: string;
     recipientName?: string;
+    relayNodeAddress?: string;
+    streamId?: string;
     className?: string;
 }
 
@@ -18,7 +26,7 @@ const TIP_AMOUNTS = [
     { amount: 5, label: '5 SUI' },
 ];
 
-export default function TipButton({ recipientAddress, recipientName = 'Streamer', className }: TipButtonProps) {
+export default function TipButton({ recipientAddress, recipientName = 'Streamer', relayNodeAddress, streamId, className }: TipButtonProps) {
     const [isOpen, setIsOpen] = useState(false);
     const [selectedAmount, setSelectedAmount] = useState(TIP_AMOUNTS[0].amount);
     const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
@@ -37,11 +45,27 @@ export default function TipButton({ recipientAddress, recipientName = 'Streamer'
             const tx = new Transaction();
 
             // Convert SUI to MIST (1 SUI = 1e9 MIST)
-            const amountInMist = BigInt(selectedAmount * 1_000_000_000);
+            const amountInMist = BigInt(Math.round(selectedAmount * 1_000_000_000));
 
-            // Split coins from gas and transfer to recipient
+            // Split coins from gas
             const [coin] = tx.splitCoins(tx.gas, [amountInMist]);
-            tx.transferObjects([coin], recipientAddress);
+
+            // Route through payment distribution if treasury is configured
+            if (TREASURY_ID && streamId && relayNodeAddress) {
+                tx.moveCall({
+                    target: `${PACKAGE_ID}::payment_distribution::process_tip`,
+                    arguments: [
+                        tx.object(TREASURY_ID),
+                        tx.pure.id(streamId),
+                        tx.pure.address(recipientAddress),
+                        tx.pure.address(relayNodeAddress),
+                        coin,
+                    ],
+                });
+            } else {
+                // Fallback: direct transfer (no relay node context)
+                tx.transferObjects([coin], recipientAddress);
+            }
 
             signAndExecute(
                 { transaction: tx },

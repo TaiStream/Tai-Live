@@ -20,6 +20,7 @@ export default function DashboardPage() {
     const [isEditingProfile, setIsEditingProfile] = useState(false);
     const [showGoLiveModal, setShowGoLiveModal] = useState(false);
     const [selectedRoomType, setSelectedRoomType] = useState('video');
+    const [selectedMode, setSelectedMode] = useState<'p2p' | 'relay'>('p2p');
     const [isDemoMode, setIsDemoMode] = useState(false);
     const { goLive, canStream, isLoading, error } = useGoLive();
 
@@ -45,7 +46,8 @@ export default function DashboardPage() {
             await goLive(effectiveTier, {
                 title: `${displayProfile.name}'s Stream`,
                 privacyMode: false,
-                roomType: selectedRoomType as 'audio' | 'podcast' | 'video' | 'premium'
+                roomType: selectedRoomType as 'audio' | 'podcast' | 'video' | 'premium',
+                mode: selectedMode
             });
             setShowGoLiveModal(false);
         } catch (err) {
@@ -171,6 +173,31 @@ export default function DashboardPage() {
                             <label htmlFor="privacy" className="text-sm text-neutral-300">
                                 Enable E2E encryption (Privacy Mode)
                             </label>
+                        </div>
+
+                        {/* Streaming Mode Selection */}
+                        <p className="text-neutral-400 text-sm mb-4">Streaming Mode:</p>
+                        <div className="grid grid-cols-2 gap-3 mb-6">
+                            <button
+                                onClick={() => setSelectedMode('p2p')}
+                                className={`p-3 rounded-xl border transition-all text-left ${selectedMode === 'p2p'
+                                    ? 'bg-blue-500/20 border-blue-500/50 text-white'
+                                    : 'bg-neutral-800/50 border-white/5 text-neutral-400 hover:border-white/20'
+                                    }`}
+                            >
+                                <div className="font-medium mb-1">Meeting (P2P)</div>
+                                <div className="text-xs opacity-70">Low latency, small groups</div>
+                            </button>
+                            <button
+                                onClick={() => setSelectedMode('relay')}
+                                className={`p-3 rounded-xl border transition-all text-left ${selectedMode === 'relay'
+                                    ? 'bg-purple-500/20 border-purple-500/50 text-white'
+                                    : 'bg-neutral-800/50 border-white/5 text-neutral-400 hover:border-white/20'
+                                    }`}
+                            >
+                                <div className="font-medium mb-1">Broadcast (Relay)</div>
+                                <div className="text-xs opacity-70">High scale, 1-to-many</div>
+                            </button>
                         </div>
 
                         {/* Go Live Button */}

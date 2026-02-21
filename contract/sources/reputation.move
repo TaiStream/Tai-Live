@@ -39,6 +39,7 @@ module tai::reputation {
     
     // Jury requirements
     const MIN_JUROR_CRED: u64 = 95;
+    const MIN_VOTES_FOR_RESOLUTION: u64 = 3;
     const VOTING_PERIOD_MS: u64 = 86_400_000; // 24 hours
     
     // Report reasons
@@ -277,7 +278,11 @@ module tai::reputation {
         let now = clock::timestamp_ms(clock);
         assert!(now >= voting_ends_at, EVotingNotOpen);
         assert!(!resolved, EReportAlreadyResolved);
-        
+
+        // Require minimum votes quorum
+        let total_votes = guilty_votes + innocent_votes;
+        assert!(total_votes >= MIN_VOTES_FOR_RESOLUTION, EInsufficientCred);
+
         let resolution = if (guilty_votes > innocent_votes) { 1 } else { 2 };
         let penalty = if (resolution == 1) {
             let penalty_amount = get_penalty_for_reason(reason);

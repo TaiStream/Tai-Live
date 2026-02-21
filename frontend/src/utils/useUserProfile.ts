@@ -3,8 +3,9 @@
 import { useEffect, useState } from 'react';
 import { useCurrentAccount, useSuiClient } from '@mysten/dapp-kit';
 
-// Package ID from testnet deployment
-const PACKAGE_ID = process.env.NEXT_PUBLIC_TAI_PACKAGE_ID || '0x485d8011d546fd82d576b5b60bad253d22f48cf0b5e8f56876d3edebb64b9f62';
+// Package ID from deployment
+const PACKAGE_ID = process.env.NEXT_PUBLIC_TAI_PACKAGE_ID;
+if (!PACKAGE_ID) throw new Error('NEXT_PUBLIC_TAI_PACKAGE_ID env var required');
 
 // UserProfile type name
 const USER_PROFILE_TYPE = `${PACKAGE_ID}::user_profile::UserProfile`;
@@ -30,6 +31,7 @@ export interface UserProfileData {
     id: string;
     tier: number;
     tierName: string;
+    accessMethod: number;
     stakedBalance: bigint;
     totalTipsSent: bigint;
     totalTipsReceived: bigint;
@@ -101,12 +103,16 @@ export function useUserProfile(): UseUserProfileResult {
                     stakedBalance = BigInt(stakedBalanceField);
                 }
 
-                const tier = Number(fields.tier);
+                // Parse tier_access nested struct: { tier, access_method, proof_data }
+                const tierAccess = fields.tier_access as { fields?: Record<string, unknown> } | undefined;
+                const tier = Number(tierAccess?.fields?.tier ?? fields.tier ?? 0);
+                const accessMethod = Number(tierAccess?.fields?.access_method ?? 0);
 
                 setProfile({
                     id: profileObject.data.objectId,
                     tier,
                     tierName: TIER_NAMES[tier] || 'Unknown',
+                    accessMethod,
                     stakedBalance,
                     totalTipsSent: BigInt(String(fields.total_tips_sent || 0)),
                     totalTipsReceived: BigInt(String(fields.total_tips_received || 0)),

@@ -229,6 +229,29 @@ module tai::room_manager {
         });
     }
 
+    /// Force-disconnect a stale viewer connection (host only)
+    /// Used when a viewer disconnects without calling leave_room
+    public fun force_disconnect(
+        room: &mut Room,
+        viewer: address,
+        clock: &Clock,
+        ctx: &mut TxContext
+    ) {
+        let host = tx_context::sender(ctx);
+        assert!(room.host == host, ENotHost);
+        assert!(table::contains(&room.active_connections, viewer), ENotJoined);
+
+        // Remove from active connections
+        table::remove(&mut room.active_connections, viewer);
+
+        event::emit(ViewerLeft {
+            room_id: object::id(room),
+            viewer,
+            watch_seconds: 0,
+            timestamp: clock::timestamp_ms(clock),
+        });
+    }
+
     // ========== View Functions ==========
 
     public fun is_host(room: &Room, addr: address): bool {

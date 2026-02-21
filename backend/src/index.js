@@ -30,6 +30,7 @@ if (!fs.existsSync(DATA_FILE)) {
 // API Routes
 app.use('/api/shelby', shelbyRoutes);
 app.use('/api/rooms', roomsRoutes);
+app.use('/api/agents', require('./routes/agents')); // New Agent API
 app.use('/', deliveryRoutes); // Mount at root for cleaner URLs like /stream/:id
 
 app.get('/', (req, res) => {
@@ -73,6 +74,16 @@ app.listen(PORT, () => {
     console.log(`🚀 Delivery Node Active at http://localhost:${PORT}/stream/:blobId`);
 });
 
-// Start WebSocket signaling server and share peers map with rooms API
-const { wss, peers } = startSignalingServer(SIGNALING_PORT);
-setRoomsProvider(() => peers);
+// Start Hybrid Servers
+// Now importing directly from the Tai Node Package (DePIN Node)
+const { SignalingServer, RelayServer } = require('@tai/node-operator');
+
+// 1. Signaling Server (P2P Co-Streaming & Meetings)
+const signaling = new SignalingServer(SIGNALING_PORT);
+
+// 2. Relay Server (Broadcast & 1-to-N)
+const relay = new RelayServer(8081, false); // false = no walrus for now, or load from env
+
+// Share peers with Rooms API (legacy support)
+setRoomsProvider(() => signaling.peers);
+

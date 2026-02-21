@@ -52,6 +52,7 @@ export default function BroadcastPage() {
     const roomId = params.roomId as string;
     const privacyMode = searchParams.get('privacy') === 'true';
     const roomType = (searchParams.get('type') || 'video') as RoomType;
+    const mode = (searchParams.get('mode') || 'p2p') as 'p2p' | 'relay';
 
     const config = ROOM_CONFIGS[roomType] || ROOM_CONFIGS.video;
 
@@ -67,6 +68,8 @@ export default function BroadcastPage() {
     const screenShareRef = useRef<HTMLVideoElement>(null);
     const clientRef = useRef<P2PClient | null>(null);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const relayRecorderRef = useRef<MediaRecorder | null>(null);
+    const relayWsRef = useRef<WebSocket | null>(null);
     const recordedChunksRef = useRef<Blob[]>([]);
     const startTimeRef = useRef<number>(Date.now());
 
@@ -86,24 +89,63 @@ export default function BroadcastPage() {
                     localVideoRef.current.srcObject = stream;
                 }
 
-                // Start P2P client
-                const client = new P2PClient({
-                    signalingUrl: 'ws://localhost:8080',
-                    roomId: roomId,
-                    peerId: crypto.randomUUID(),
-                    turnServers: [{ urls: 'turn:localhost:3478', username: 'username', credential: 'password' }],
-                    privacyMode: privacyMode
-                });
+                // Initializer functionality based on mode
+                if (mode === 'relay') {
+                    // Mode 1: Relay (Broadcast) via WebSocket
+                    console.log(`📡 Starting Relay Broadcast for room: ${roomId}`);
 
-                await client.start(stream);
-                clientRef.current = client;
-                console.log(`📡 Broadcasting ${roomType} stream for room:`, roomId);
+                    const ws = new WebSocket('ws://localhost:8081');
+                    relayWsRef.current = ws;
 
-                // Start MediaRecorder for Walrus VOD
+                    ws.onopen = () => {
+                        console.log('✅ Connected to Relay Server');
+                        ws.send(JSON.stringify({
+                            type: 'start_broadcast',
+                            streamId: roomId,
+                            peerId: streamer.address
+                        }));
+
+                        // Start Recorder for Relay
+                        if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+                            const relayRecorder = new MediaRecorder(stream, {
+                                mimeType: 'video/webm;codecs=vp9',
+                                // variable bitrate, but aim for quality
+                                videoBitsPerSecond: 2500000
+                            });
+
+                            relayRecorder.ondataavailable = async (event) => {
+                                if (event.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+                                    ws.send(await event.data.arrayBuffer());
+                                }
+                            };
+
+                            relayRecorder.start(200); // 200ms chunks for lower latency
+                            relayRecorderRef.current = relayRecorder;
+                        }
+                    };
+
+                    ws.onclose = () => console.log('❌ Relay connection closed');
+
+                } else {
+                    // Mode 2: P2P (Meeting)
+                    const client = new P2PClient({
+                        signalingUrl: 'ws://localhost:8080',
+                        roomId: roomId,
+                        peerId: streamer.address, // Use address as peerId for consistency
+                        turnServers: [{ urls: 'turn:localhost:3478', username: 'username', credential: 'password' }],
+                        privacyMode: privacyMode
+                    });
+
+                    await client.start(stream);
+                    clientRef.current = client;
+                    console.log(`📡 Broadcasting P2P ${roomType} stream for room:`, roomId);
+                }
+
+                // Start Local MediaRecorder for VOD (Backup / User Download)
                 if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
                     const recorder = new MediaRecorder(stream, {
                         mimeType: 'video/webm;codecs=vp9',
-                        videoBitsPerSecond: 2500000, // 2.5 Mbps
+                        videoBitsPerSecond: 2500000,
                     });
 
                     recorder.ondataavailable = (event) => {
@@ -112,10 +154,10 @@ export default function BroadcastPage() {
                         }
                     };
 
-                    recorder.start(2000); // 2s chunks for safety
+                    recorder.start(2000); // 2s chunks for file storage
                     mediaRecorderRef.current = recorder;
                     setIsRecording(true);
-                    console.log('🎬 VOD recording started');
+                    console.log('🎬 Local VOD recording started');
                 }
             } catch (err) {
                 console.error('Failed to start broadcast:', err);
@@ -135,18 +177,34 @@ export default function BroadcastPage() {
         return () => {
             clearInterval(timer);
             clearInterval(viewerTimer);
+
+            // Stop tracks
             if (localVideoRef.current?.srcObject) {
                 (localVideoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
             }
             if (screenShareRef.current?.srcObject) {
                 (screenShareRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
             }
+
+            // Stop VOD Recorder
             if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
                 mediaRecorderRef.current.stop();
             }
+
+            // Stop Relay Recorder
+            if (relayRecorderRef.current && relayRecorderRef.current.state !== 'inactive') {
+                relayRecorderRef.current.stop();
+            }
+
+            // Close WS
+            if (relayWsRef.current) {
+                relayWsRef.current.close();
+            }
+
+            // Destroy P2P
             clientRef.current?.destroy();
         };
-    }, [roomId, privacyMode, roomType, config.hasVideo]);
+    }, [roomId, privacyMode, roomType, config.hasVideo, mode]);
 
     const toggleMute = () => {
         if (localVideoRef.current?.srcObject) {
@@ -190,7 +248,7 @@ export default function BroadcastPage() {
     };
 
     const copyShareLink = () => {
-        navigator.clipboard.writeText(`${window.location.origin}/live/stream/${roomId}`);
+        navigator.clipboard.writeText(`${window.location.origin}/live/stream/${roomId}?mode=${mode}`);
         alert('Stream link copied!');
     };
 

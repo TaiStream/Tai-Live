@@ -120,6 +120,9 @@ module tai::points {
 
     // ========== Internal Functions ==========
 
+    /// Maximum total points that can ever be issued
+    const MAX_TOTAL_POINTS: u64 = 1_000_000_000_000; // 1 trillion cap
+
     fun award_points_internal(
         registry: &mut PointsRegistry,
         profile: &mut UserProfile,
@@ -127,12 +130,21 @@ module tai::points {
         activity_type: u8,
         ctx: &mut TxContext
     ) {
-        user_profile::add_points(profile, points);
-        registry.total_points_issued = registry.total_points_issued + points;
+        // Cap total issuance to prevent overflow
+        let remaining = if (registry.total_points_issued >= MAX_TOTAL_POINTS) {
+            0
+        } else {
+            let cap = MAX_TOTAL_POINTS - registry.total_points_issued;
+            if (points > cap) { cap } else { points }
+        };
+        if (remaining == 0) { return };
+
+        user_profile::add_points(profile, remaining);
+        registry.total_points_issued = registry.total_points_issued + remaining;
 
         event::emit(PointsAwarded {
             user: tx_context::sender(ctx),
-            amount: points,
+            amount: remaining,
             activity_type,
             total_points: user_profile::total_points(profile),
         });

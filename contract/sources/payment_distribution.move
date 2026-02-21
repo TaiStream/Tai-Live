@@ -246,6 +246,28 @@ module tai::payment_distribution {
         operator.is_active = false;
     }
 
+    // ========== Entry Wrappers ==========
+
+    /// Entry wrapper: withdraw streamer earnings and transfer to sender
+    #[allow(lint(public_entry))]
+    public entry fun withdraw_streamer_earnings_entry(
+        treasury: &mut Treasury,
+        ctx: &mut TxContext
+    ) {
+        let coin = withdraw_streamer_earnings(treasury, ctx);
+        transfer::public_transfer(coin, tx_context::sender(ctx));
+    }
+
+    /// Entry wrapper: withdraw operator earnings and transfer to sender
+    #[allow(lint(public_entry))]
+    public entry fun withdraw_operator_earnings_entry(
+        treasury: &mut Treasury,
+        ctx: &mut TxContext
+    ) {
+        let coin = withdraw_operator_earnings(treasury, ctx);
+        transfer::public_transfer(coin, tx_context::sender(ctx));
+    }
+
     // ========== View Functions ==========
 
     public fun get_streamer_earnings(treasury: &Treasury, streamer: address): u64 {

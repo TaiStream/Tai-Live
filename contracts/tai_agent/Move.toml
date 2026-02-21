@@ -1,0 +1,10 @@
+[package]
+name = "tai_agent"
+edition = "2024.beta"
+
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "95cddc3f5" }
+sai = { local = "../../../SAI-SuiAgentIndex" }
+
+[addresses]
+tai_agent = "0x0"

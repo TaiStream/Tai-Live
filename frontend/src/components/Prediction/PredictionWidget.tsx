@@ -5,8 +5,8 @@ import { useCurrentAccount, useSignAndExecuteTransaction, useSuiClient } from '@
 import { Transaction } from '@mysten/sui/transactions';
 import { TrendingUp, TrendingDown, Clock, Users, Loader2, CheckCircle } from 'lucide-react';
 
-// Use the deployed Tai package ID
-const PACKAGE_ID = process.env.NEXT_PUBLIC_TAI_PACKAGE_ID || '0x485d8011d546fd82d576b5b60bad253d22f48cf0b5e8f56876d3edebb64b9f62';
+const PACKAGE_ID = process.env.NEXT_PUBLIC_TAI_PACKAGE_ID;
+if (!PACKAGE_ID) throw new Error('NEXT_PUBLIC_TAI_PACKAGE_ID env var required');
 const CLOCK_ID = '0x6'; // Sui system clock object ID
 
 export interface Prediction {
